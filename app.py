@@ -1,6 +1,9 @@
 import os
 import time
 import requests
+import threading
+from datetime import datetime
+import pytz # <-- Import baru
 from dotenv import load_dotenv
 
 # --- 1. PENGATURAN DAN INISIALISASI ---
@@ -9,6 +12,7 @@ load_dotenv()
 # Ambil konfigurasi dari Environment Variables Railway
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+PORT = int(os.getenv("PORT", 5000)) 
 
 # Pengaturan API Grow a Garden
 GAGAPI_BASE_URL = "https://gagapi.onrender.com/"
@@ -85,7 +89,7 @@ def start_polling_loop():
     """
     Loop utama yang mengumpulkan perubahan stok dan langsung mengirim notifikasi.
     """
-    print("Memulai pemantauan stok (Mode Worker)...")
+    print("Memulai pemantauan stok (Mode Lapor Perubahan Stok > 0)...")
     while True:
         print("\\nMemulai siklus pengecekan baru...")
         all_changed_items_this_cycle = {}
@@ -96,7 +100,14 @@ def start_polling_loop():
                 all_changed_items_this_cycle[item_type] = changed_items
         
         if all_changed_items_this_cycle:
-            timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+            # ==================== PERUBAHAN ZONA WAKTU DI SINI ====================
+            # Dapatkan waktu UTC saat ini, lalu konversi ke WIB (Asia/Jakarta)
+            utc_now = datetime.now(pytz.utc)
+            wib_timezone = pytz.timezone("Asia/Jakarta")
+            wib_now = utc_now.astimezone(wib_timezone)
+            timestamp = wib_now.strftime("%Y-%m-%d %H:%M:%S WIB") # Tambahkan WIB agar lebih jelas
+            # ======================================================================
+
             message_parts = [
                 "✨ *New Stock Alert!* ✨",
                 f"_{timestamp}_",
@@ -116,14 +127,14 @@ def start_polling_loop():
             message_parts.append("_Next check in 5 minutes._")
             full_message = "\n".join(message_parts)
             
-            # Panggil fungsi pengiriman pesan secara LANGSUNG
             send_telegram_message(full_message)
 
         print("Siklus pengecekan selesai. Menunggu 5 menit (300 detik)...")
         time.sleep(300)
 
+# Kita tidak butuh Flask lagi untuk versi worker
+# Cukup jalankan loop utama
 if __name__ == '__main__':
-    # Pastikan variabel sudah diset sebelum memulai
     if not os.getenv("TELEGRAM_BOT_TOKEN") or not os.getenv("TELEGRAM_CHAT_ID"):
         print("ERROR: Pastikan TELEGRAM_BOT_TOKEN dan TELEGRAM_CHAT_ID sudah diset di Environment Variables Railway.")
     else:
