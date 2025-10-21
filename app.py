@@ -1,8 +1,6 @@
 import os
 import time
 import requests
-import threading
-from flask import Flask
 from dotenv import load_dotenv
 
 # --- 1. PENGATURAN DAN INISIALISASI ---
@@ -11,8 +9,6 @@ load_dotenv()
 # Ambil konfigurasi dari Environment Variables Railway
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-# Railway akan memberikan PORT secara dinamis
-PORT = int(os.getenv("PORT", 5000)) 
 
 # Pengaturan API Grow a Garden
 GAGAPI_BASE_URL = "https://gagapi.onrender.com/"
@@ -22,9 +18,6 @@ ITEMS_TO_TRACK = {
     "Gear": "gear"
 }
 previous_stocks = {}
-
-# Inisialisasi server Flask
-app = Flask(__name__)
 
 # --- 2. FUNGSI-FUNGSI UTAMA ---
 def send_telegram_message(message):
@@ -92,7 +85,7 @@ def start_polling_loop():
     """
     Loop utama yang mengumpulkan perubahan stok dan langsung mengirim notifikasi.
     """
-    print("Memulai pemantauan stok (Mode Lapor Perubahan Stok > 0)...")
+    print("Memulai pemantauan stok (Mode Worker)...")
     while True:
         print("\\nMemulai siklus pengecekan baru...")
         all_changed_items_this_cycle = {}
@@ -123,22 +116,16 @@ def start_polling_loop():
             message_parts.append("_Next check in 5 minutes._")
             full_message = "\n".join(message_parts)
             
-            # Karena tidak ada webhook, panggil fungsi pengiriman pesan secara LANGSUNG
+            # Panggil fungsi pengiriman pesan secara LANGSUNG
             send_telegram_message(full_message)
 
         print("Siklus pengecekan selesai. Menunggu 5 menit (300 detik)...")
         time.sleep(300)
 
-# Endpoint sederhana untuk health check dari Railway
-@app.route('/')
-def home():
-    return "Bot Notifikasi Grow a Garden Aktif."
-
 if __name__ == '__main__':
-    # Jalankan loop polling di thread terpisah agar tidak memblokir server web
-    polling_thread = threading.Thread(target=start_polling_loop)
-    polling_thread.daemon = True
-    polling_thread.start()
-    
-    # Jalankan server web utama (Gunicorn akan menangani ini di Railway)
-    app.run(host='0.0.0.0', port=PORT)
+    # Pastikan variabel sudah diset sebelum memulai
+    if not os.getenv("TELEGRAM_BOT_TOKEN") or not os.getenv("TELEGRAM_CHAT_ID"):
+        print("ERROR: Pastikan TELEGRAM_BOT_TOKEN dan TELEGRAM_CHAT_ID sudah diset di Environment Variables Railway.")
+    else:
+        # Langsung jalankan loop utama
+        start_polling_loop()
