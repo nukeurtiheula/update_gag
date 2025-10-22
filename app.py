@@ -75,7 +75,7 @@ def start_reporting_loop():
             # Buat pesan notifikasi hanya jika ada perubahan
             timestamp = datetime.now(pytz.timezone("Asia/Jakarta")).strftime("%Y-%m-%d %H:%M:%S WIB")
             message_parts = [
-                "✨ *Store Stock Updated!* ✨",
+                "✨ *Stock Updated!* ✨",
                 f"_{timestamp}_",
                 ""
             ]
