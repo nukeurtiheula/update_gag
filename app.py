@@ -1,7 +1,6 @@
 import os
 import time
 import requests
-import threading
 from datetime import datetime
 import pytz
 from dotenv import load_dotenv
@@ -25,96 +24,101 @@ ITEMS_TO_TRACK = {
 def send_telegram_message(message):
     """Mengirim pesan notifikasi ke grup Telegram."""
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        print("Token atau Chat ID belum diset di environment variables Railway.")
+        print("Token atau Chat ID belum diset.")
         return
         
     api_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = { 'chat_id': TELEGRAM_CHAT_ID, 'text': message, 'parse_mode': 'Markdown' }
     try:
-        response = requests.post(api_url, data=payload)
+        # Menambahkan timeout untuk mencegah skrip macet
+        response = requests.post(api_url, data=payload, timeout=15)
         response.raise_for_status()
-        print("Laporan rutin terkirim!")
+        print("Laporan perubahan stok terkirim!")
     except requests.exceptions.RequestException as e:
         print(f"Gagal mengirim laporan: {e}")
 
-def get_current_stock(item_type, api_endpoint):
-    """
-    Hanya mengambil data stok saat ini dari API dan mengembalikannya apa adanya.
-    """
+def get_stock_from_api(api_endpoint):
+    """Mengambil data stok dari satu endpoint API GAGAPI."""
     api_url = f"{GAGAPI_BASE_URL}{api_endpoint}"
     try:
-        response = requests.get(api_url)
+        # Menambahkan timeout 20 detik
+        response = requests.get(api_url, timeout=20)
         response.raise_for_status()
-        current_data = response.json()
-
-        # Konversi data ke format yang konsisten (list of dicts)
-        if isinstance(current_data, list):
-            return current_data
-        elif isinstance(current_data, dict):
-            # Jika format lama kembali, ubah ke format baru
-            return [{"name": name, **details} for name, details in current_data.items()]
-        else:
-            print(f"Peringatan: Data untuk '{item_type}' tidak dikenal formatnya.")
-            return []
+        return response.json()
     except requests.exceptions.RequestException as e:
-        print(f"Error saat mengambil data untuk {item_type}: {e}")
-        return []
+        print(f"Error saat mengambil data dari {api_endpoint}: {e}")
+        return [] # Kembalikan list kosong jika gagal, agar konsisten
 
 def start_reporting_loop():
     """
-    Loop utama yang mengirim laporan rutin setiap 5 menit.
+    Loop utama yang mengecek setiap 1 menit dan hanya lapor jika ada perubahan.
     """
-    print("Memulai mode Laporan Rutin Toko...")
+    print("Memulai mode Laporan Perubahan Stok...")
+    
+    # --- VARIABEL 'INGATAN' UNTUK MENYIMPAN STOK TERAKHIR ---
+    last_known_stock = {}
+
     while True:
-        print("\\nMemulai siklus laporan baru...")
+        print(f"\n[{datetime.now().strftime('%H:%M:%S')}] Memulai siklus pengecekan baru...")
         
-        all_current_items = {}
+        current_stock_snapshot = {}
+        has_any_stock_to_report = False
 
-        # Cek setiap kategori dan kumpulkan isinya
-        for item_type, endpoint in ITEMS_TO_TRACK.items():
-            current_items = get_current_stock(item_type, endpoint)
-            if current_items: # Jika ada item di kategori ini
-                all_current_items[item_type] = current_items
+        # Langkah 1: Ambil data stok terbaru dari semua kategori
+        for category_name, endpoint in ITEMS_TO_TRACK.items():
+            current_stock_snapshot[category_name] = get_stock_from_api(endpoint)
         
-        # Setelah semua kategori dicek, buat satu laporan besar
-        if all_current_items:
-            utc_now = datetime.now(pytz.utc)
-            wib_timezone = pytz.timezone("Asia/Jakarta")
-            wib_now = utc_now.astimezone(wib_timezone)
-            timestamp = wib_now.strftime("%Y-%m-%d %H:%M:%S WIB")
+        # Langkah 2: Bandingkan data terbaru dengan data di 'ingatan'
+        if current_stock_snapshot != last_known_stock:
+            print(">>> Perubahan stok terdeteksi! Menyiapkan laporan lengkap...")
 
+            # Buat pesan notifikasi hanya jika ada perubahan
+            timestamp = datetime.now(pytz.timezone("Asia/Jakarta")).strftime("%Y-%m-%d %H:%M:%S WIB")
             message_parts = [
-                "✨ *New Stock Alert!* ✨",
+                "✨ *Store Stock Updated!* ✨",
                 f"_{timestamp}_",
                 ""
             ]
             category_emojis = { "Seeds": "🌱", "Eggs": "🥚", "Gear": "⚙️" }
-            for category_name, items_list in all_current_items.items():
-                emoji = category_emojis.get(category_name, "➡️")
-                message_parts.append(f"{emoji} *{category_name}:*")
-                for item in items_list:
-                    name = item.get('name', 'N/A').replace('_', ' ').title()
-                    stock = item.get('quantity', item.get('stock', 'N/A'))
-                    message_parts.append(f"- {name} : {stock}")
-                message_parts.append("")
-            
-            # ==================== FOOTER DITAMBAHKAN KEMBALI DI SINI ====================
-            message_parts.append("Happy Gardening! 🌳")
-            message_parts.append("_Next check in 5 minutes._")
-            # ==========================================================================
-            
-            full_message = "\n".join(message_parts)
-            send_telegram_message(full_message)
-        else:
-            print("Toko tampaknya sedang kosong, tidak ada laporan yang dikirim.")
 
-        print("Siklus laporan selesai. Menunggu 5 menit (300 detik)...")
-        time.sleep(300)
+            for category_name, items_list in current_stock_snapshot.items():
+                items_with_stock_messages = []
+                
+                for item in items_list:
+                    # Filter: Hanya tampilkan item yang stoknya lebih dari 0
+                    if int(item.get('stock', 0)) > 0:
+                        name = item.get('name', 'N/A').replace('_', ' ').title()
+                        stock = item.get('stock')
+                        items_with_stock_messages.append(f"- {name} : {stock}")
+                        has_any_stock_to_report = True
+
+                # Hanya tampilkan judul kategori jika ada item yang tersedia di dalamnya
+                if items_with_stock_messages:
+                    emoji = category_emojis.get(category_name, "➡️")
+                    message_parts.append(f"{emoji} *{category_name}:*")
+                    message_parts.extend(items_with_stock_messages)
+                    message_parts.append("")
+            
+            # Kirim notifikasi hanya jika ada setidaknya satu item yang tersedia untuk dilaporkan
+            if has_any_stock_to_report:
+                message_parts.append("Happy Gardening! 🌳")
+                full_message = "\n".join(message_parts)
+                send_telegram_message(full_message)
+            else:
+                print("Stok berubah, tetapi semua item menjadi kosong. Tidak ada laporan yang dikirim.")
+
+            # Langkah 3: PENTING! Perbarui 'ingatan' dengan data yang baru
+            last_known_stock = current_stock_snapshot
+        
+        else:
+            print("Tidak ada perubahan stok. Melewati pengiriman.")
+
+        # Menunggu 1 menit sebelum siklus berikutnya
+        print("Siklus selesai. Menunggu 1 menit (60 detik)...")
+        time.sleep(60)
 
 if __name__ == '__main__':
-    # Pastikan variabel sudah diset sebelum memulai
     if not os.getenv("TELEGRAM_BOT_TOKEN") or not os.getenv("TELEGRAM_CHAT_ID"):
-        print("ERROR: Pastikan TELEGRAM_BOT_TOKEN dan TELEGRAM_CHAT_ID sudah diset di Environment Variables Railway.")
+        print("ERROR: Pastikan TELEGRAM_BOT_TOKEN dan TELEGRAM_CHAT_ID sudah diset.")
     else:
-        # Langsung jalankan loop utama
         start_reporting_loop()
